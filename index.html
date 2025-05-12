@@ -5,20 +5,66 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Text to Audio Converter</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom animation for loading spinner */
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            display: inline-block;
+            width: 1.5rem;
+            height: 1.5rem;
+            border: 2px solid #ccc;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+    </style>
 </head>
 <body class="bg-gray-100 flex flex-col items-center justify-between min-h-screen">
     <div class="flex-grow flex items-center justify-center w-full">
-        <div class="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
-            <h1 class="text-2xl font-bold text-center mb-4">Text to Audio Converter</h1>
-            <textarea id="textInput" class="w-full p-2 border rounded-md mb-4" rows="5" placeholder="Enter text to convert to audio..."></textarea>
+        <div class="bg-white p-6 rounded-lg shadow-xl w-full max-w-md border-t-4 border-blue-500 transition-all hover:shadow-2xl">
+            <h1 class="text-2xl font-bold text-center mb-4 text-gray-800">Text to Audio Converter</h1>
+            <div id="statusText" class="text-center text-sm text-gray-600 mb-4 min-h-[1.5rem]"></div>
+            <textarea 
+                id="textInput" 
+                class="w-full p-3 border rounded-md mb-4 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" 
+                rows="5" 
+                placeholder="Type or paste text to convert to audio..." 
+                aria-label="Enter text to convert to speech"
+            ></textarea>
             <div class="mb-4">
-                <label for="voiceSelect" class="block text-sm font-medium text-gray-700">Select Language:</label>
-                <select id="voiceSelect" class="w-full p-2 border rounded-md"></select>
+                <label for="voiceSelect" class="block text-sm font-medium text-gray-700 mb-1">Select Language:</label>
+                <select 
+                    id="voiceSelect" 
+                    class="w-full p-2 border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" 
+                    aria-label="Select voice for speech"
+                ></select>
             </div>
-            <div class="flex justify-center space-x-2">
-                <button id="playBtn" class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600">Play</button>
-                <button id="pauseBtn" class="bg-yellow-500 text-white px-4 py-2 rounded-md hover:bg-yellow-600" disabled>Pause</button>
-                <button id="stopBtn" class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600" disabled>Stop</button>
+            <div class="flex justify-center space-x-2 flex-wrap gap-2">
+                <button 
+                    id="playBtn" 
+                    class="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 focus:ring-2 focus:ring-blue-500 transition" 
+                    aria-label="Play speech"
+                >Play</button>
+                <button 
+                    id="pauseBtn" 
+                    class="bg-yellow-500 text-white px-4 py-2 rounded-md hover:bg-yellow-600 focus:ring-2 focus:ring-yellow-500 transition" 
+                    disabled 
+                    aria-label="Pause or resume speech"
+                >Pause</button>
+                <button 
+                    id="stopBtn" 
+                    class="bg-red-500 text-white px-4 py-2 rounded-md hover:bg-red-600 focus:ring-2 focus:ring-red-500 transition" 
+                    disabled 
+                    aria-label="Stop speech"
+                >Stop</button>
+                <button 
+                    id="downloadBtn" 
+                    class="bg-green-500 text-white px-4 py-2 rounded-md hover:bg-green-600 focus:ring-2 focus:ring-green-500 transition" 
+                    disabled 
+                    aria-label="Download speech as audio file"
+                >Download</button>
             </div>
         </div>
     </div>
@@ -43,10 +89,26 @@
         const playBtn = document.getElementById('playBtn');
         const pauseBtn = document.getElementById('pauseBtn');
         const stopBtn = document.getElementById('stopBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const statusText = document.getElementById('statusText');
         let voices = [];
         let utterance = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
 
-        // Populate voice list for English and Malayalam
+        // Show status message
+        function showStatus(message, isError = false) {
+            statusText.textContent = message;
+            statusText.classList.toggle('text-red-500', isError);
+            statusText.classList.toggle('text-gray-600', !isError);
+            if (message) {
+                setTimeout(() => {
+                    statusText.textContent = '';
+                }, 5000);
+            }
+        }
+
+        // Populate voice list with grouped languages
         function populateVoiceList() {
             voices = speechSynthesis.getVoices().filter(voice => 
                 voice.lang.startsWith('en') || voice.lang.startsWith('ml')
@@ -54,36 +116,74 @@
             voiceSelect.innerHTML = '';
             if (voices.length === 0) {
                 voiceSelect.innerHTML = '<option value="">No voices available</option>';
-                alert('No English or Malayalam voices found on your device.');
+                showStatus('No English or Malayalam voices found.', true);
                 return;
             }
-            voices.forEach((voice, index) => {
-                const option = document.createElement('option');
-                option.value = index;
-                option.textContent = `${voice.name} (${voice.lang.startsWith('en') ? 'English' : 'Malayalam'})`;
-                voiceSelect.appendChild(option);
-            });
+            const enVoices = voices.filter(v => v.lang.startsWith('en'));
+            const mlVoices = voices.filter(v => v.lang.startsWith('ml'));
+            if (enVoices.length) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = 'English Voices';
+                enVoices.forEach((voice, index) => {
+                    const option = document.createElement('option');
+                    option.value = voices.indexOf(voice);
+                    option.textContent = voice.name;
+                    optgroup.appendChild(option);
+                });
+                voiceSelect.appendChild(optgroup);
+            }
+            if (mlVoices.length) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = 'Malayalam Voices';
+                mlVoices.forEach((voice, index) => {
+                    const option = document.createElement('option');
+                    option.value = voices.indexOf(voice);
+                    option.textContent = voice.name;
+                    optgroup.appendChild(option);
+                });
+                voiceSelect.appendChild(optgroup);
+            }
+            showStatus('');
         }
 
-        // Load voices
-        populateVoiceList();
-        if (speechSynthesis.onvoiceschanged !== undefined) {
-            speechSynthesis.onvoiceschanged = populateVoiceList;
+        // Load voices with retry
+        function loadVoicesWithRetry(maxAttempts = 3, delay = 500) {
+            showStatus('Loading voices... <span class="spinner"></span>');
+            let attempts = 0;
+            const tryLoad = () => {
+                voices = speechSynthesis.getVoices().filter(voice => voice.lang.startsWith('en') || voice.lang.startsWith('ml'));
+                if (voices.length > 0 || attempts >= maxAttempts) {
+                    populateVoiceList();
+                } else {
+                    attempts++;
+                    setTimeout(tryLoad, delay);
+                }
+            };
+            tryLoad();
+        }
+        speechSynthesis.onvoiceschanged = loadVoicesWithRetry;
+        loadVoicesWithRetry();
+
+        // Debounce function to prevent rapid clicks
+        function debounce(func, wait) {
+            let timeout;
+            return (...args) => {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func(...args), wait);
+            };
         }
 
         // Play button
-        playBtn.addEventListener('click', () => {
+        playBtn.addEventListener('click', debounce(() => {
             if (textInput.value.trim() === '') {
-                alert('Please enter some text to convert.');
+                showStatus('Please enter some text.', true);
                 return;
             }
             if (voices.length === 0) {
-                alert('No voices available. Check your device settings.');
+                showStatus('No voices available.', true);
                 return;
             }
-            if (speechSynthesis.speaking && !speechSynthesis.paused) {
-                return;
-            }
+            if (speechSynthesis.speaking && !speechSynthesis.paused) return;
 
             utterance = new SpeechSynthesisUtterance(textInput.value);
             const selectedVoice = voices[voiceSelect.value];
@@ -91,41 +191,130 @@
             utterance.lang = selectedVoice.lang;
             utterance.pitch = 1.0;
             utterance.rate = 0.9;
-
+            utterance.onend = () => {
+                playBtn.disabled = false;
+                pauseBtn.disabled = true;
+                stopBtn.disabled = true;
+                downloadBtn.disabled = true;
+                pauseBtn.textContent = 'Pause';
+                showStatus('');
+            };
+            utterance.onerror = (event) => {
+                console.error('Speech error:', event.error);
+                showStatus('Speech synthesis failed.', true);
+                playBtn.disabled = false;
+                pauseBtn.disabled = true;
+                stopBtn.disabled = true;
+                downloadBtn.disabled = true;
+                pauseBtn.textContent = 'Pause';
+            };
             speechSynthesis.speak(utterance);
             playBtn.disabled = true;
             pauseBtn.disabled = false;
             stopBtn.disabled = false;
-        });
+            downloadBtn.disabled = false;
+            showStatus('Speaking...');
+        }, 300));
 
         // Pause button
-       
-
- pauseBtn.addEventListener('click', () => {
+        pauseBtn.addEventListener('click', () => {
             if (speechSynthesis.speaking && !speechSynthesis.paused) {
                 speechSynthesis.pause();
                 pauseBtn.textContent = 'Resume';
+                showStatus('Paused');
             } else if (speechSynthesis.paused) {
                 speechSynthesis.resume();
                 pauseBtn.textContent = 'Pause';
+                showStatus('Speaking...');
             }
         });
 
         // Stop button
         stopBtn.addEventListener('click', () => {
             speechSynthesis.cancel();
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
             playBtn.disabled = false;
             pauseBtn.disabled = true;
             stopBtn.disabled = true;
+            downloadBtn.disabled = true;
             pauseBtn.textContent = 'Pause';
+            showStatus('');
         });
 
-        // Reset buttons when speech ends
-        utterance && (utterance.onend = () => {
-            playBtn.disabled = false;
-            pauseBtn.disabled = true;
-            stopBtn.disabled = true;
-            pauseBtn.textContent = 'Pause';
+        // Download button
+        downloadBtn.addEventListener('click', async () => {
+            if (!window.MediaRecorder) {
+                showStatus('Download not supported in this browser.', true);
+                return;
+            }
+            if (textInput.value.trim() === '' || voices.length === 0) {
+                showStatus('Please enter text and select a voice.', true);
+                return;
+            }
+
+            // Start speech synthesis
+            utterance = new SpeechSynthesisUtterance(textInput.value);
+            const selectedVoice = voices[voiceSelect.value];
+            utterance.voice = selectedVoice;
+            utterance.lang = selectedVoice.lang;
+            utterance.pitch = 1.0;
+            utterance.rate = 0.9;
+
+            // Set up audio context to capture output
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioContext.createMediaStreamSource(new MediaStream());
+            const destination = audioContext.createMediaStreamDestination();
+            source.connect(destination);
+
+            // Start recording
+            audioChunks = [];
+            mediaRecorder = new MediaRecorder(destination.stream);
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunks.push(event.data);
+                }
+            };
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                const url = URL.createObjectURL(audioBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'speech.wav';
+                a.click();
+                URL.revokeObjectURL(url);
+                showStatus('Download complete!');
+            };
+            mediaRecorder.start();
+            showStatus('Recording...');
+
+            // Play speech to record it
+            utterance.onend = () => {
+                mediaRecorder.stop();
+                audioContext.close();
+                playBtn.disabled = false;
+                pauseBtn.disabled = true;
+                stopBtn.disabled = true;
+                downloadBtn.disabled = true;
+                pauseBtn.textContent = 'Pause';
+                showStatus('');
+            };
+            utterance.onerror = (event) => {
+                console.error('Speech error:', event.error);
+                mediaRecorder.stop();
+                audioContext.close();
+                showStatus('Recording failed.', true);
+                playBtn.disabled = false;
+                pauseBtn.disabled = true;
+                stopBtn.disabled = true;
+                downloadBtn.disabled = true;
+            };
+            speechSynthesis.speak(utterance);
+            playBtn.disabled = true;
+            pauseBtn.disabled = false;
+            stopBtn.disabled = false;
+            downloadBtn.disabled = true;
         });
     </script>
 </body>
